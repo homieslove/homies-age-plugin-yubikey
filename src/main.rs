@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 
@@ -116,6 +117,12 @@ struct PluginOptions {
     pin_policy: Option<String>,
 
     #[options(
+        help = "PIN for YubiKey authentication (also via AGE_PLUGIN_YUBIKEY_PIN env var). Enables non-interactive use.",
+        no_short
+    )]
+    pin: Option<String>,
+
+    #[options(
         help = "Specify which YubiKey to use, if more than one is plugged in.",
         no_short
     )]
@@ -138,6 +145,7 @@ struct PluginFlags {
     serial: Option<Serial>,
     slot: Option<RetiredSlotId>,
     name: Option<String>,
+    pin: Option<String>,
     pin_policy: Option<PinPolicy>,
     touch_policy: Option<TouchPolicy>,
     force: bool,
@@ -149,6 +157,8 @@ impl TryFrom<PluginOptions> for PluginFlags {
     fn try_from(opts: PluginOptions) -> Result<Self, Self::Error> {
         let serial = opts.serial.map(|s| s.into());
         let slot = opts.slot.map(util::ui_to_slot).transpose()?;
+        // PIN can come from --pin flag or AGE_PLUGIN_YUBIKEY_PIN env var
+        let pin = opts.pin.or_else(|| env::var("AGE_PLUGIN_YUBIKEY_PIN").ok());
         let pin_policy = opts
             .pin_policy
             .map(util::pin_policy_from_string)
@@ -162,6 +172,7 @@ impl TryFrom<PluginOptions> for PluginFlags {
             serial,
             slot,
             name: opts.name,
+            pin,
             pin_policy,
             touch_policy,
             force: opts.force,
@@ -174,6 +185,7 @@ fn generate(flags: PluginFlags) -> Result<(), Error> {
 
     let (stub, recipient, metadata) = builder::IdentityBuilder::new(flags.slot)
         .with_name(flags.name)
+        .with_pin(flags.pin)
         .with_pin_policy(flags.pin_policy)
         .with_touch_policy(flags.touch_policy)
         .force(flags.force)

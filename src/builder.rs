@@ -23,6 +23,7 @@ pub(crate) struct IdentityBuilder {
     slot: Option<RetiredSlotId>,
     force: bool,
     name: Option<String>,
+    pin: Option<String>,
     pin_policy: Option<PinPolicy>,
     touch_policy: Option<TouchPolicy>,
 }
@@ -32,10 +33,16 @@ impl IdentityBuilder {
         IdentityBuilder {
             slot,
             name: None,
+            pin: None,
             pin_policy: None,
             touch_policy: None,
             force: false,
         }
+    }
+
+    pub(crate) fn with_pin(mut self, pin: Option<String>) -> Self {
+        self.pin = pin;
+        self
     }
 
     pub(crate) fn with_name(mut self, name: Option<String>) -> Self {
@@ -93,7 +100,8 @@ impl IdentityBuilder {
         // No need to ask for users to enter their PIN if the PIN policy requires it,
         // because here we _always_ require them to enter their PIN in order to access the
         // protected management key (which is necessary in order to generate identities).
-        key::manage(yubikey)?;
+        // If a PIN was provided via --pin or env var, use it instead of prompting.
+        key::manage(yubikey, self.pin.as_deref())?;
 
         // Generate a new key in the selected slot.
         let generated = yubikey_generate(
@@ -122,14 +130,20 @@ impl IdentityBuilder {
 
         if let PinPolicy::Always = pin_policy {
             // We need to enter the PIN again.
-            let pin = Password::new()
-                .with_prompt(fl!(
-                    "plugin-enter-pin",
-                    yubikey_serial = yubikey.serial().to_string(),
-                ))
-                .report(true)
-                .interact()?;
-            yubikey.verify_pin(pin.as_bytes())?;
+            if let Some(ref pin) = self.pin {
+                // Use provided PIN
+                yubikey.verify_pin(pin.as_bytes())?;
+            } else {
+                // Prompt for PIN interactively
+                let pin = Password::new()
+                    .with_prompt(fl!(
+                        "plugin-enter-pin",
+                        yubikey_serial = yubikey.serial().to_string(),
+                    ))
+                    .report(true)
+                    .interact()?;
+                yubikey.verify_pin(pin.as_bytes())?;
+            }
         }
         if let TouchPolicy::Never = touch_policy {
             // No need to touch YubiKey

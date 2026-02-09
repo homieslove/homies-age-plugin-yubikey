@@ -294,23 +294,27 @@ fn request_pin<E, E2>(
     }
 }
 
-pub(crate) fn manage(yubikey: &mut YubiKey) -> Result<(), Error> {
+pub(crate) fn manage(yubikey: &mut YubiKey, provided_pin: Option<&str>) -> Result<(), Error> {
     const DEFAULT_PIN: &str = "123456";
     const DEFAULT_PUK: &str = "12345678";
 
     eprintln!();
-    let pin = Password::new()
-        .with_prompt(fl!(
-            "mgr-enter-pin",
-            yubikey_serial = yubikey.serial().to_string(),
-            default_pin = DEFAULT_PIN,
-        ))
-        .report(true)
-        .interact()?;
+    let pin = match provided_pin {
+        Some(pin) => pin.to_string(),
+        None => Password::new()
+            .with_prompt(fl!(
+                "mgr-enter-pin",
+                yubikey_serial = yubikey.serial().to_string(),
+                default_pin = DEFAULT_PIN,
+            ))
+            .report(true)
+            .interact()?,
+    };
     yubikey.verify_pin(pin.as_bytes())?;
 
     // If the user is using the default PIN, help them to change it.
-    if pin == DEFAULT_PIN {
+    // Skip this if a PIN was provided via --pin or env var (non-interactive mode).
+    if pin == DEFAULT_PIN && provided_pin.is_none() {
         eprintln!();
         eprintln!("{}", fl!("mgr-change-default-pin"));
         eprintln!();
