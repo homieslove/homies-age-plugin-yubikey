@@ -2,7 +2,8 @@
 
 use std::env;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Read, Write};
+
 
 use age_plugin::run_state_machine;
 use dialoguer::{Confirm, Input, Select};
@@ -74,6 +75,28 @@ macro_rules! fl {
     }};
 }
 
+/// Read PIN from stdin when stdin is not a terminal (i.e., has been piped/redirected).
+/// This is a secure method that doesn't expose the PIN in:
+/// - Process list (ps aux)
+/// - Environment variables
+/// - Shell history
+///
+/// Usage from Go:
+///   cmd.Stdin = strings.NewReader(pin)
+fn read_pin_from_stdin() -> Option<String> {
+    // Only read from stdin if it's not a terminal (i.e., data has been piped in)
+    let mut stdin = io::stdin();
+    if stdin.is_terminal() {
+        return None;
+    }
+
+    let mut pin = String::new();
+    stdin.read_to_string(&mut pin).ok()?;
+
+    // Trim whitespace/newline from the PIN
+    Some(pin.trim().to_string())
+}
+
 #[derive(Debug, Options)]
 struct PluginOptions {
     #[options(help = "Print this help message and exit.")]
@@ -117,7 +140,7 @@ struct PluginOptions {
     pin_policy: Option<String>,
 
     #[options(
-        help = "PIN for YubiKey authentication (also via AGE_PLUGIN_YUBIKEY_PIN env var). Enables non-interactive use.",
+        help = "PIN for YubiKey authentication (also via AGE_PLUGIN_YUBIKEY_PIN env var, or via stdin). Enables non-interactive use.",
         no_short
     )]
     pin: Option<String>,
@@ -157,8 +180,13 @@ impl TryFrom<PluginOptions> for PluginFlags {
     fn try_from(opts: PluginOptions) -> Result<Self, Self::Error> {
         let serial = opts.serial.map(|s| s.into());
         let slot = opts.slot.map(util::ui_to_slot).transpose()?;
-        // PIN can come from --pin flag or AGE_PLUGIN_YUBIKEY_PIN env var
-        let pin = opts.pin.or_else(|| env::var("AGE_PLUGIN_YUBIKEY_PIN").ok());
+        // PIN can come from (in order of priority):
+        // 1. --pin flag
+        // 2. AGE_PLUGIN_YUBIKEY_PIN env var
+        // 3. stdin (if piped/redirected - secure, no unsafe code)
+        let pin = opts.pin
+            .or_else(|| env::var("AGE_PLUGIN_YUBIKEY_PIN").ok())
+            .or_else(|| read_pin_from_stdin());
         let pin_policy = opts
             .pin_policy
             .map(util::pin_policy_from_string)
